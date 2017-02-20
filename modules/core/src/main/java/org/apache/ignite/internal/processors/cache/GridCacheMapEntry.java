@@ -3150,13 +3150,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         assert Thread.holdsLock(this);
         assert val != null : "null values in update for key: " + key;
 
-        cctx.offheap().update(key,
-            val,
-            ver,
-            expireTime,
-            partition(),
-            localPartition(),
-            oldRow);
+        cctx.offheap().invoke(key,  localPartition(), new UpdateClosure(this, val, ver, expireTime));
     }
 
     /**
@@ -3806,6 +3800,72 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         /** {@inheritDoc} */
         @Override public String toString() {
             return "IteratorEntry [key=" + key + ']';
+        }
+    }
+
+    /**
+     *
+     */
+    private static class UpdateClosure implements IgniteCacheOffheapManager.OffheapInvokeClosure {
+        /** */
+        private final GridCacheMapEntry entry;
+
+        /** */
+        private final CacheObject val;
+
+        /** */
+        private final GridCacheVersion ver;
+
+        /** */
+        private final long expireTime;
+
+        /** */
+        private CacheDataRow newRow;
+
+        /** */
+        private IgniteTree.OperationType treeOp = IgniteTree.OperationType.PUT;
+
+        /**
+         * @param entry Entry.
+         * @param val New value.
+         * @param ver New version.
+         * @param expireTime New expire time.
+         */
+        UpdateClosure(GridCacheMapEntry entry, CacheObject val, GridCacheVersion ver, long expireTime) {
+            this.entry = entry;
+            this.val = val;
+            this.ver = ver;
+            this.expireTime = expireTime;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void call(@Nullable CacheDataRow oldRow) throws IgniteCheckedException {
+            if (oldRow != null)
+                oldRow.key(entry.key);
+
+            newRow = entry.localPartition().dataStore().createRow(entry.key,
+                val,
+                ver,
+                expireTime,
+                oldRow);
+
+            treeOp = oldRow != null && oldRow.link() == newRow.link() ?
+                IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT;
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow newRow() {
+            return newRow;
+        }
+
+        /** {@inheritDoc} */
+        @Override public IgniteTree.OperationType operationType() {
+            return treeOp;
+        }
+
+        /** {@inheritDoc} */
+        @Nullable @Override public CacheDataRow oldRow() {
+            return null;
         }
     }
 
